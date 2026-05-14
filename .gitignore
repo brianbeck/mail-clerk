@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.log
+
+# Editor / OS noise
+.DS_Store
+*.swp
+
+# Claude Code project state and per-user guidance
+.claude/
+CLAUDE.md
+
+# In case anyone ever writes a local config in-tree, never commit it
+config.toml
+accounts.json
