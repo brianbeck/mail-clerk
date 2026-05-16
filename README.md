@@ -37,8 +37,9 @@ clerk auth list
 
 # Read
 clerk mail search "from:alice subject:budget"          # fans out across all accounts
+clerk mail search "from:alice" --include-body          # bodies inline — one call, not search+N reads
 clerk mail search "clerk-test" --include-trash         # opt into trashed messages (Gmail)
-clerk mail read <message-id> --account <email>
+clerk mail read <id1> <id2> <id3> --account <email>    # batch read, fetched in parallel
 clerk mail attachment <message-id> <attachment-id> --account <email> --save ~/Downloads/
 clerk calendar list --from today --to +7d              # times shown in local TZ
 clerk calendar list --from today --to +7d --utc        # opt into UTC display
@@ -127,6 +128,15 @@ pytest --cov=src/clerk --cov-report=term-missing
 - `calendar create/update/cancel` with no attendees never generates invitation emails (`sendUpdates=none` is passed to Google; Graph events without attendees do not invite anyone). Updates always pass `sendUpdates=none` to avoid spamming attendees.
 - `mail delete` moves to Trash / Deleted Items (not permanent). Permanent delete would require broadening Gmail scope to `https://mail.google.com/` — intentionally not requested.
 - Mail attachments via `--attach` are sent inline. Microsoft Graph caps inline attachments at 3 MB; larger files raise a clear error rather than silently truncate (no upload-session support in v1).
+
+## Performance: fetching bodies fast
+
+The naive way to read a batch of emails is "search (metadata only), then one read per result" — for an MCP/CLI agent that's 1 + N calls, each paying process spawn + auth + an API round-trip. Two ways to collapse that:
+
+- **`mail search --include-body`** (CLI) / **`mail_search(include_body=True)`** (MCP): returns full message bodies in the search call itself. For Microsoft Graph this is *free* — the list response already carries the body, so there are zero extra API round-trips. For Gmail it still needs one GET per message (API constraint), but those are fanned out in parallel and it's still a single CLI/MCP call instead of N. Attachment metadata is omitted on this fast path; use `mail read` when you need it.
+- **Batch `mail read id1 id2 id3`** (CLI) / **`mail_read_batch(message_ids, account)`** (MCP): when you already have ids, fetch them all concurrently in one call.
+
+Rule of thumb: if you're about to read several search hits, pass `--include-body` to the search instead.
 
 ## Notes / limitations
 

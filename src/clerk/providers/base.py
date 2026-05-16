@@ -60,7 +60,11 @@ class EventPatch:
 
 class MailProvider(Protocol):
     def search(
-        self, query: SearchQuery, limit: int, include_trash: bool = False
+        self,
+        query: SearchQuery,
+        limit: int,
+        include_trash: bool = False,
+        include_body: bool = False,
     ) -> list[Message]: ...
     def get(self, message_id: str) -> MessageFull: ...
     def send(self, msg: OutgoingMessage) -> str | None: ...

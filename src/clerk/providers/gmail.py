@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import email.policy
 import email.utils
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -30,7 +31,11 @@ class GmailProvider:
         return {"Authorization": f"Bearer {self._token_provider()}"}
 
     def search(
-        self, query: SearchQuery, limit: int, include_trash: bool = False
+        self,
+        query: SearchQuery,
+        limit: int,
+        include_trash: bool = False,
+        include_body: bool = False,
     ) -> list[Message]:
         q = build_gmail_query(query)
         params = {"maxResults": str(limit)}
@@ -43,20 +48,35 @@ class GmailProvider:
         )
         resp.raise_for_status()
         ids = [m["id"] for m in resp.json().get("messages", [])]
+        if not ids:
+            return []
 
-        out: list[Message] = []
-        for mid in ids:
+        # Gmail requires one GET per message regardless. Fan those out in
+        # parallel so N body fetches cost ~1 round-trip of wall time instead
+        # of N serial round-trips.
+        fmt = "full" if include_body else "metadata"
+
+        def fetch(mid: str) -> Message:
+            extra = (
+                {}
+                if include_body
+                else {"metadataHeaders": ["From", "To", "Subject", "Date"]}
+            )
             r = self._client.get(
                 f"/users/me/messages/{mid}",
-                params={
-                    "format": "metadata",
-                    "metadataHeaders": ["From", "To", "Subject", "Date"],
-                },
+                params={"format": fmt, **extra},
                 headers=self._headers(),
             )
             r.raise_for_status()
-            out.append(parse_message_summary(self.account_id, r.json()))
-        return out
+            data = r.json()
+            if include_body:
+                return parse_message_full_structured(self.account_id, data)
+            return parse_message_summary(self.account_id, data)
+
+        with ThreadPoolExecutor(max_workers=min(len(ids), 8)) as pool:
+            # Preserve the search result ordering.
+            results = list(pool.map(fetch, ids))
+        return results
 
     def get(self, message_id: str) -> MessageFull:
         # format=full gives us a structured parts tree with explicit attachment

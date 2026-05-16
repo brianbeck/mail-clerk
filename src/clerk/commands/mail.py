@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
+import mimetypes
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
 import typer
-
-import mimetypes
 
 from clerk import permissions, search
 from clerk.config import Account, load_accounts, load_config
@@ -61,6 +61,12 @@ def cmd_search(
     utc: bool = typer.Option(
         False, "--utc", help="Display dates in UTC instead of local time."
     ),
+    include_body: bool = typer.Option(
+        False,
+        "--include-body",
+        help="Fetch full message bodies inline (collapses search+read into one "
+        "call). Attachment metadata is not included; use `mail read` for that.",
+    ),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
     token: Optional[str] = typer.Option(None, "--token", help="Capability token."),
 ) -> None:
@@ -76,13 +82,17 @@ def cmd_search(
     accounts = _resolve_accounts(account)
     cfg = load_config()
     results, errors = factory.fanout_mail_search(
-        accounts, cfg, lambda p: p.search(parsed, limit, include_trash=include_trash)
+        accounts,
+        cfg,
+        lambda p: p.search(
+            parsed, limit, include_trash=include_trash, include_body=include_body
+        ),
     )
 
     if json_out:
         typer.echo(json.dumps([m.model_dump(mode="json", by_alias=True) for m in results], indent=2))
     else:
-        _render_messages_table(results, utc=utc)
+        _render_messages_table(results, utc=utc, show_body=include_body)
 
     for account_id, exc in errors:
         typer.secho(f"warn: {account_id}: {exc}", fg=typer.colors.YELLOW, err=True)
@@ -90,37 +100,57 @@ def cmd_search(
 
 @app.command("read")
 def cmd_read(
-    message_id: str = typer.Argument(..., help="Provider-native message id."),
+    message_ids: list[str] = typer.Argument(
+        ..., help="One or more provider-native message ids (fetched in parallel)."
+    ),
     account: str = typer.Option(..., "--account", help="Account id or email."),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of formatted."),
     token: Optional[str] = typer.Option(None, "--token", help="Capability token."),
 ) -> None:
-    """Read a single message from a specific account."""
+    """Read one or more messages from a specific account.
+
+    Multiple ids are fetched concurrently and returned in the order given.
+    """
     _gate_or_die("mail", "read", token)
     accounts = _resolve_accounts([account])
     cfg = load_config()
     provider = factory.mail_provider(accounts[0], cfg)
-    msg = provider.get(message_id)
+
+    if len(message_ids) == 1:
+        messages = [provider.get(message_ids[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=min(len(message_ids), 8)) as pool:
+            messages = list(pool.map(provider.get, message_ids))
 
     if json_out:
-        typer.echo(json.dumps(msg.model_dump(mode="json", by_alias=True), indent=2))
+        if len(messages) == 1:
+            typer.echo(json.dumps(messages[0].model_dump(mode="json", by_alias=True), indent=2))
+        else:
+            typer.echo(
+                json.dumps(
+                    [m.model_dump(mode="json", by_alias=True) for m in messages], indent=2
+                )
+            )
         return
 
-    typer.echo(f"From:    {msg.from_}")
-    typer.echo(f"To:      {', '.join(msg.to)}")
-    if msg.cc:
-        typer.echo(f"Cc:      {', '.join(msg.cc)}")
-    typer.echo(f"Date:    {msg.date.isoformat() if msg.date else '?'}")
-    typer.echo(f"Subject: {msg.subject}")
-    if msg.attachments:
-        typer.echo(f"Attachments ({len(msg.attachments)}):")
-        for a in msg.attachments:
-            typer.echo(f"  - {a.filename}  ({a.mime_type}, {a.size_bytes} bytes)  id={a.id}")
-    typer.echo("")
-    typer.echo(msg.body_text or msg.body_html or "(empty body)")
+    for i, msg in enumerate(messages):
+        if i > 0:
+            typer.echo("\n" + "─" * 60 + "\n")
+        typer.echo(f"From:    {msg.from_}")
+        typer.echo(f"To:      {', '.join(msg.to)}")
+        if msg.cc:
+            typer.echo(f"Cc:      {', '.join(msg.cc)}")
+        typer.echo(f"Date:    {msg.date.isoformat() if msg.date else '?'}")
+        typer.echo(f"Subject: {msg.subject}")
+        if msg.attachments:
+            typer.echo(f"Attachments ({len(msg.attachments)}):")
+            for a in msg.attachments:
+                typer.echo(f"  - {a.filename}  ({a.mime_type}, {a.size_bytes} bytes)  id={a.id}")
+        typer.echo("")
+        typer.echo(msg.body_text or msg.body_html or "(empty body)")
 
 
-def _render_messages_table(messages, *, utc: bool = False) -> None:
+def _render_messages_table(messages, *, utc: bool = False, show_body: bool = False) -> None:
     if not messages:
         typer.echo("No results.")
         return
@@ -133,6 +163,11 @@ def _render_messages_table(messages, *, utc: bool = False) -> None:
             f"{unread} {date_str}  [{m.account_id}]  {_trim(m.from_, 30)}  {_trim(m.subject, 60)}"
         )
         typer.echo(f"    id={m.id}")
+        if show_body:
+            body = getattr(m, "body_text", "") or getattr(m, "body_html", "")
+            preview = " ".join(body.split())[:280]
+            if preview:
+                typer.echo(f"    {preview}")
 
 
 def _format_dt(dt, *, utc: bool) -> str:

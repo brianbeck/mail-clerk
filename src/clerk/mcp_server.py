@@ -84,14 +84,30 @@ def mail_search(
     include_trash: Annotated[
         bool, Field(description="Include trashed/spam messages (Gmail default-excludes them).")
     ] = False,
+    include_body: Annotated[
+        bool,
+        Field(
+            description="Fetch full message bodies inline. Collapses the common "
+            "search-then-read-each-result pattern into a single call. Attachment "
+            "metadata is not included; use mail_read for that."
+        ),
+    ] = False,
 ) -> list[dict]:
-    """Search mail across one or more configured accounts. Returns lightweight metadata."""
+    """Search mail across one or more configured accounts.
+
+    Returns lightweight metadata by default. Pass include_body=true to get full
+    bodies in the same call instead of issuing a mail_read per result.
+    """
     _check("mail", "read")
     parsed = search_mod.parse(query)
     resolved = _resolve_accounts(accounts)
     cfg = load_config()
     results, _errors = factory.fanout_mail_search(
-        resolved, cfg, lambda p: p.search(parsed, limit, include_trash=include_trash)
+        resolved,
+        cfg,
+        lambda p: p.search(
+            parsed, limit, include_trash=include_trash, include_body=include_body
+        ),
     )
     return [m.model_dump(mode="json", by_alias=True) for m in results]
 
@@ -108,6 +124,31 @@ def mail_read(
     provider = factory.mail_provider(acct, cfg)
     msg = provider.get(message_id)
     return msg.model_dump(mode="json", by_alias=True)
+
+
+@mcp.tool()
+def mail_read_batch(
+    message_ids: Annotated[
+        list[str], Field(description="Provider-native message ids to fetch.")
+    ],
+    account: Annotated[str, Field(description="Account id or email.")],
+) -> list[dict]:
+    """Read multiple messages from one account in a single call.
+
+    Fetches concurrently and returns results in the order of message_ids.
+    Use this instead of issuing one mail_read per id.
+    """
+    _check("mail", "read")
+    acct = _resolve_accounts([account])[0]
+    cfg = load_config()
+    provider = factory.mail_provider(acct, cfg)
+    if not message_ids:
+        return []
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(len(message_ids), 8)) as pool:
+        messages = list(pool.map(provider.get, message_ids))
+    return [m.model_dump(mode="json", by_alias=True) for m in messages]
 
 
 @mcp.tool()

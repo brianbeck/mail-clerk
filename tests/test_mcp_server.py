@@ -95,7 +95,7 @@ def test_mail_search_dispatches_to_providers(with_write_token):
         def __init__(self, account_id):
             self.account_id = account_id
 
-        def search(self, query, limit, include_trash=False):
+        def search(self, query, limit, include_trash=False, include_body=False):
             return [fake_msg] if self.account_id == fake_msg.account_id else []
 
     with patch(

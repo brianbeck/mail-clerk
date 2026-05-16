@@ -100,7 +100,7 @@ def test_mail_search_with_token_runs_through_gate(isolated_config):
         def __init__(self, account_id):
             self.account_id = account_id
 
-        def search(self, query, limit, include_trash=False):
+        def search(self, query, limit, include_trash=False, include_body=False):
             return [m for m in fake_messages if m.account_id == self.account_id]
 
         def get(self, message_id):

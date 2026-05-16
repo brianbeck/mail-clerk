@@ -32,7 +32,11 @@ class GraphMailProvider:
         }
 
     def search(
-        self, query: SearchQuery, limit: int, include_trash: bool = False
+        self,
+        query: SearchQuery,
+        limit: int,
+        include_trash: bool = False,
+        include_body: bool = False,
     ) -> list[Message]:
         # Graph's /me/messages searches across all folders by default, including
         # Deleted Items, so `include_trash` is a no-op here. Kept for interface
@@ -41,7 +45,14 @@ class GraphMailProvider:
         params = build_mail_search_params(query, limit)
         resp = self._client.get("/me/messages", params=params, headers=self._headers())
         resp.raise_for_status()
-        return [parse_message_summary(self.account_id, m) for m in resp.json().get("value", [])]
+        items = resp.json().get("value", [])
+        if include_body:
+            # The list response already carries the full `body` — parsing it as a
+            # full message costs zero extra API calls. Attachment metadata is NOT
+            # populated here (that needs a separate /attachments call per message);
+            # use `mail read` if you need the attachment list.
+            return [parse_message_full(self.account_id, m) for m in items]
+        return [parse_message_summary(self.account_id, m) for m in items]
 
     def get(self, message_id: str) -> MessageFull:
         resp = self._client.get(f"/me/messages/{message_id}", headers=self._headers())

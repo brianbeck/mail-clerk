@@ -45,6 +45,29 @@ def test_each_account_can_list_one_mail():
         assert isinstance(results, list)
 
 
+def test_each_account_search_include_body_returns_full_messages():
+    """include_body should return MessageFull instances in one call (no per-message
+    read round-trips from the caller's perspective)."""
+    from clerk.models import MessageFull
+
+    reg = load_accounts()
+    assert reg.accounts, "no accounts configured"
+    cfg = load_config()
+
+    for account in reg.accounts:
+        provider = factory.mail_provider(account, cfg)
+        results = provider.search(SearchQuery(), limit=2, include_body=True)
+        assert isinstance(results, list)
+        for m in results:
+            assert isinstance(m, MessageFull), (
+                f"{account.email}: include_body did not yield MessageFull"
+            )
+            # body_text/body_html attributes exist on the fast path (may be empty
+            # for genuinely empty messages, but the fields must be present).
+            assert hasattr(m, "body_text")
+            assert hasattr(m, "body_html")
+
+
 def test_each_account_can_list_calendar_window():
     reg = load_accounts()
     assert reg.accounts, "no accounts configured"
