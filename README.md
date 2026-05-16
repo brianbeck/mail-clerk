@@ -11,14 +11,54 @@ Unified mail + calendar CLI and MCP server. One interface for Microsoft 365 / Ou
 - **MCP stdio server** exposing every operation as an MCP tool, for use by agent clients (Claude Code, etc.).
 - **Direct OAuth** to Microsoft Graph and Gmail/Google Calendar APIs — no dependency on the Outlook desktop app, no TCC re-approval on Outlook updates.
 
-## Install (development)
+## Install
+
+### Global (recommended for daily use)
+
+[pipx](https://pipx.pypa.io) puts `clerk` on your PATH in its own isolated
+environment, decoupled from any working tree:
 
 ```bash
+brew install pipx                                          # one time
+pipx install git+https://github.com/brianbeck/mail-clerk.git
+clerk --version
+
+# Pin to a specific release instead of the default branch:
+pipx install "git+https://github.com/brianbeck/mail-clerk.git@v1.2.0"
+```
+
+### Development (editable, from a clone)
+
+```bash
+git clone https://github.com/brianbeck/mail-clerk.git
+cd mail-clerk
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 clerk --version
 ```
+
+An editable install points at the source tree, so code changes take effect
+immediately — there is nothing to reinstall after editing. Re-run
+`pip install -e ".[dev]"` only when dependencies, entry points, or the
+recorded package version change.
+
+## Upgrade
+
+```bash
+# pipx global install:
+pipx upgrade clerk
+# or jump to a specific tag:
+pipx install "git+https://github.com/brianbeck/mail-clerk.git@v1.2.0" --force
+
+# editable dev clone:
+git pull
+pip install -e ".[dev]"        # only needed for dependency/metadata refresh
+```
+
+`clerk --version` reflects the running code. Note that for an editable install
+`pip show clerk` may report a stale version string until you reinstall — this
+is cosmetic; the actual behavior tracks the source.
 
 ## OAuth setup (one-time)
 
